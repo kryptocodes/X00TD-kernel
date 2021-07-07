@@ -50,6 +50,8 @@
 
 #define MSM_SENSOR_BYPASS_VIDEO_NODE    1
 
+#define FRONT_AUX_SENSOR_SUPPORT
+
 enum msm_sensor_camera_id_t {
 	CAMERA_0,
 	CAMERA_1,
@@ -70,6 +72,7 @@ enum camb_position_t {
 	BACK_CAMERA_B,
 	FRONT_CAMERA_B,
 	AUX_CAMERA_B = 0x100,
+	FRONT_AUX_CAMERA_B,
 	INVALID_CAMERA_B,
 };
 
@@ -253,6 +256,9 @@ enum msm_camera_i2c_operation {
 	MSM_CAM_WRITE = 0,
 	MSM_CAM_POLL,
 	MSM_CAM_READ,
+	/*Huaqin add third supply front camera hi846 tsp by lizihao at 2018/04/10 start*/
+	MSM_CAM_SINGLE_LOOP_READ,
+	/*Huaqin add third supply front camera hi846 tsp by lizihao at 2018/04/10 end*/
 };
 
 struct msm_sensor_i2c_sync_params {
@@ -367,6 +373,7 @@ struct msm_camera_csiphy_params {
 	unsigned char csid_core;
 	unsigned int csiphy_clk;
 	unsigned char csi_3phase;
+	uint64_t data_rate;
 };
 
 struct msm_camera_i2c_seq_reg_array {

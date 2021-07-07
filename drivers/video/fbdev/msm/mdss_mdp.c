@@ -1,7 +1,7 @@
 /*
  * MDSS MDP Interface (used by framebuffer core)
  *
- * Copyright (c) 2007-2017, The Linux Foundation. All rights reserved.
+ * Copyright (c) 2007-2018, The Linux Foundation. All rights reserved.
  * Copyright (C) 2007 Google Incorporated
  *
  * This software is licensed under the terms of the GNU General Public
@@ -105,7 +105,9 @@ static struct mdss_panel_intf pan_types[] = {
 	{"edp", MDSS_PANEL_INTF_EDP},
 	{"hdmi", MDSS_PANEL_INTF_HDMI},
 };
-static char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+/* Huaqin modify for Modification sequence by qimaokang at 2018/05/31 start */
+char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+/* Huaqin modify for Modification sequence by qimaokang at 2018/05/31 end */
 
 struct mdss_hw mdss_mdp_hw = {
 	.hw_ndx = MDSS_HW_MDP,
@@ -2033,8 +2035,8 @@ static void mdss_mdp_hw_rev_caps_init(struct mdss_data_type *mdata)
 	mdata->hflip_buffer_reused = true;
 	/* prevent disable of prefill calculations */
 	mdata->min_prefill_lines = 0xffff;
-	/* clock gating feature is enabled by default */
-	mdata->enable_gate = true;
+	/* clock gating feature is disabled by default */
+	mdata->enable_gate = false;
 	mdata->pixel_ram_size = 0;
 	mem_protect_sd_ctrl_id = MEM_PROTECT_SD_CTRL_FLAT;
 
@@ -2435,6 +2437,8 @@ static u32 mdss_mdp_scaler_init(struct mdss_data_type *mdata,
 
 		ret = mdss_mdp_ds_addr_setup(mdata);
 	}
+
+	mutex_init(&mdata->scaler_off->scaler_lock);
 
 	return ret;
 }
@@ -5625,7 +5629,9 @@ static int __init mdss_mdp_driver_init(void)
 	return 0;
 
 }
-
+/* Huaqin modify for Modification sequence by qimaokang at 2018/05/31 start */
+EXPORT_SYMBOL(mdss_mdp_panel);
+/* Huaqin modify for Modification sequence by qimaokang at 2018/05/31 end */
 module_param_string(panel, mdss_mdp_panel, MDSS_MAX_PANEL_LEN, 0);
 MODULE_PARM_DESC(panel,
 		"panel=<lk_cfg>:<pan_intf>:<pan_intf_cfg>:<panel_topology_cfg> "

@@ -20,6 +20,7 @@
 #include <linux/slab.h>
 #include <linux/iopoll.h>
 #include <linux/kthread.h>
+#include <linux/errno.h>
 
 #include <linux/msm-bus.h>
 
@@ -62,7 +63,7 @@ struct mdss_hw mdss_dsi1_hw = {
 
 #define DSI_EVENT_Q_MAX	4
 
-#define DSI_BTA_EVENT_TIMEOUT (HZ / 10)
+#define DSI_BTA_EVENT_TIMEOUT (100)
 
 /* Mutex common for both the controllers */
 static struct mutex dsi_mtx;
@@ -1246,6 +1247,9 @@ int mdss_dsi_reg_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 		else if (sctrl_pdata)
 			ret = ctrl_pdata->check_read_status(sctrl_pdata);
 	} else {
+/* Huaqin duchangguo modify for disabling esd check when panel is not connect before boot start*/
+		ret = -ENOTSUPP;
+/* Huaqin duchangguo modify for disabling esd check when panel is not connect before boot end*/
 		pr_err("%s: Read status register returned error\n", __func__);
 	}
 
@@ -1633,7 +1637,7 @@ int mdss_dsi_bta_status_check(struct mdss_dsi_ctrl_pdata *ctrl_pdata)
 	wmb();
 
 	ret = wait_for_completion_killable_timeout(&ctrl_pdata->bta_comp,
-						DSI_BTA_EVENT_TIMEOUT);
+						msecs_to_jiffies(DSI_BTA_EVENT_TIMEOUT));
 	if (ret <= 0) {
 		mdss_dsi_disable_irq(ctrl_pdata, DSI_BTA_TERM);
 		pr_err("%s: DSI BTA error: %i\n", __func__, ret);

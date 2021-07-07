@@ -65,11 +65,18 @@ enum print_reason {
 #define OTG_DELAY_VOTER			"OTG_DELAY_VOTER"
 #define USBIN_I_VOTER			"USBIN_I_VOTER"
 #define WEAK_CHARGER_VOTER		"WEAK_CHARGER_VOTER"
+#define OV_VOTER			"OV_VOTER"
 
 #define VCONN_MAX_ATTEMPTS	3
 #define OTG_MAX_ATTEMPTS	3
 #define BOOST_BACK_STORM_COUNT	3
 #define WEAK_CHG_STORM_COUNT	8
+
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 start */
+#define COUNTRY_BR 1
+#define COUNTRY_IN 1
+#define COUNTRY_OTHER 2
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 end */
 
 enum smb_mode {
 	PARALLEL_MASTER = 0,
@@ -83,6 +90,7 @@ enum {
 	TYPEC_CC2_REMOVAL_WA_BIT	= BIT(2),
 	QC_AUTH_INTERRUPT_WA_BIT	= BIT(3),
 	OTG_WA				= BIT(4),
+	OV_IRQ_WA_BIT			= BIT(5),
 };
 
 enum smb_irq_index {
@@ -311,6 +319,9 @@ struct smb_charger {
 //Huaqin added by tangqingyong at 20180206 for USB alert start
 	struct qpnp_vadc_chip			*gpio12_vadc_dev;
 //Huaqin added by tangqingyong at 20180206 for USB alert end
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 start */
+	struct delayed_work read_countrycode_work;
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 end */
 
 	/* cached status */
 	int			voltage_min_uv;

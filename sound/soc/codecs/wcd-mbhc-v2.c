@@ -67,6 +67,10 @@ enum wcd_mbhc_cs_mb_en_flag {
 	WCD_MBHC_EN_NONE,
 };
 
+/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 start */
+static int hph_state = 0;
+/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 end */
+
 /* Huaqin add for solve headphone can not recognize by xudayi at 2018/02/12 start */
 static bool wcd_swch_level_remove(struct wcd_mbhc *mbhc);
 /* Huaqin add for solve headphone can not recognize by xudayi at 2018/02/12 end */
@@ -77,6 +81,12 @@ static void wcd_mbhc_jack_report(struct wcd_mbhc *mbhc,
 	/* Huaqin add for check headset event by xudayi at 2018/03/10 start */
 	pr_err("%s:%x,%x",__func__,status,mask);
 	/* Huaqin add for check headset event by xudayi at 2018/03/10 end */
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 start */
+	if((status == 0x9 && mask == 0x3cf) || (status == 0xb && mask == 0x3cf))
+		hph_state = 1;
+	else
+		hph_state = 0;
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 end */
 	snd_soc_jack_report(jack, status, mask);
 }
 
@@ -1210,6 +1220,19 @@ exit:
 	return spl_hs;
 }
 
+static void wcd_headset_btn_delay(struct work_struct *work)
+{
+	struct wcd_mbhc *mbhc =
+		container_of(work, typeof(*mbhc), mbhc_btn_delay_dwork.work);
+	/*
+	 * Allow delay between detection completion and the time when
+	 * headset button presses are allowed to be processed. This
+	 * is done in order to prevent spurious button interrupts
+	 * right after plug detection is finished.
+	 */
+	mbhc->ignore_btn_intr = false;
+}
+
 static void wcd_correct_swch_plug(struct work_struct *work)
 {
 	struct wcd_mbhc *mbhc;
@@ -1227,11 +1250,16 @@ static void wcd_correct_swch_plug(struct work_struct *work)
 	int rc, spl_hs_count = 0;
 	int cross_conn;
 	int try = 0;
+	int retry = 0;
+	int headset_cnt = 0;
 
 	pr_debug("%s: enter\n", __func__);
 
 	mbhc = container_of(work, struct wcd_mbhc, correct_plug_swch);
 	codec = mbhc->codec;
+
+	cancel_delayed_work_sync(&mbhc->mbhc_btn_delay_dwork);
+	mbhc->ignore_btn_intr = true;
 
 	/*
 	 * Enable micbias/pullup for detection in correct work.
@@ -1300,6 +1328,7 @@ correct_plug_type:
 
 	timeout = jiffies + msecs_to_jiffies(HS_DETECT_PLUG_TIME_MS);
 	while (!time_after(jiffies, timeout)) {
+		retry++;
 		if (mbhc->hs_detect_work_stop) {
 			pr_debug("%s: stop requested: %d\n", __func__,
 					mbhc->hs_detect_work_stop);
@@ -1352,7 +1381,7 @@ correct_plug_type:
 		 * instead of hogging system by contineous polling, wait for
 		 * sometime and re-check stop request again.
 		 */
-		msleep(180);
+		msleep(5 * retry);
 		if (hs_comp_res && (spl_hs_count < WCD_MBHC_SPL_HS_CNT)) {
 			spl_hs = wcd_mbhc_check_for_spl_headset(mbhc,
 								&spl_hs_count);
@@ -1361,6 +1390,18 @@ correct_plug_type:
 				hs_comp_res = 0;
 				spl_hs = true;
 				mbhc->micbias_enable = true;
+			}
+		}
+
+		/*
+		 * It's pretty certain to be a headset after being detected
+		 * as such 10 times, so exit early to reduce detection
+		 * latency.
+		 */
+		if (plug_type == MBHC_PLUG_TYPE_HEADSET) {
+			if (++headset_cnt == 10) {
+				wrk_complete = false;
+				break;
 			}
 		}
 
@@ -1384,7 +1425,8 @@ correct_plug_type:
 					pr_debug("%s: switch didnt work\n",
 						  __func__);
 					plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
-					goto report;
+					/* Retry instead in case of a noisy detection */
+					continue;
 				} else {
 					plug_type = MBHC_PLUG_TYPE_GND_MIC_SWAP;
 				}
@@ -1559,6 +1601,8 @@ exit:
 		mbhc->mbhc_cb->hph_pull_down_ctrl(codec, true);
 
 	mbhc->mbhc_cb->lock_sleep(mbhc, false);
+	schedule_delayed_work(&mbhc->mbhc_btn_delay_dwork,
+					msecs_to_jiffies(750));
 	pr_debug("%s: leave\n", __func__);
 }
 
@@ -2088,6 +2132,11 @@ static irqreturn_t wcd_mbhc_btn_press_handler(int irq, void *data)
 				__func__);
 		goto done;
 	}
+
+	/* Don't process button interrupts immediately after plug detection */
+	if (mbhc->ignore_btn_intr)
+		goto done;
+
 	mbhc->buttons_pressed |= mask;
 	mbhc->mbhc_cb->lock_sleep(mbhc, true);
 	if (schedule_delayed_work(&mbhc->mbhc_btn_dwork,
@@ -2131,6 +2180,14 @@ static irqreturn_t wcd_mbhc_release_handler(int irq, void *data)
 		goto exit;
 
 	}
+
+	/* Don't process button interrupts immediately after plug detection */
+	if (mbhc->ignore_btn_intr) {
+		wcd_cancel_btn_work(mbhc);
+		mbhc->buttons_pressed &= ~WCD_MBHC_JACK_BUTTON_MASK;
+		goto exit;
+	}
+
 	if (mbhc->buttons_pressed & WCD_MBHC_JACK_BUTTON_MASK) {
 		ret = wcd_cancel_btn_work(mbhc);
 		if (ret == 0) {
@@ -2827,6 +2884,18 @@ void wcd_mbhc_stop(struct wcd_mbhc *mbhc)
 }
 EXPORT_SYMBOL(wcd_mbhc_stop);
 
+/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 start */
+static ssize_t show_hp_state(struct device *dev,struct device_attribute *attr, char *buf)
+{
+	int ret = 0;
+
+	ret = snprintf(buf, sizeof(int), "%d\n",hph_state);
+	return ret;
+}
+
+static DEVICE_ATTR(hp_state, S_IRUGO, show_hp_state,NULL);
+/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 end */
+
 /*
  * wcd_mbhc_init : initialize MBHC internal structures.
  *
@@ -2839,6 +2908,9 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		      bool impedance_det_en)
 {
 	int ret = 0;
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 start */
+	int ret_hp =0;
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 end */
 	int hph_swh = 0;
 	int gnd_swh = 0;
 	u32 hph_moist_config[3];
@@ -2946,6 +3018,8 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		INIT_DELAYED_WORK(&mbhc->mbhc_firmware_dwork,
 				  wcd_mbhc_fw_read);
 		INIT_DELAYED_WORK(&mbhc->mbhc_btn_dwork, wcd_btn_lpress_fn);
+		INIT_DELAYED_WORK(&mbhc->mbhc_btn_delay_dwork,
+						wcd_headset_btn_delay);
 	}
 	mutex_init(&mbhc->hphl_pa_lock);
 	mutex_init(&mbhc->hphr_pa_lock);
@@ -3039,6 +3113,10 @@ int wcd_mbhc_init(struct wcd_mbhc *mbhc, struct snd_soc_codec *codec,
 		       mbhc->intr_ids->hph_right_ocp);
 		goto err_hphr_ocp_irq;
 	}
+
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 start */
+	ret_hp = sysfs_create_file(&card->dev->kobj,&dev_attr_hp_state.attr);
+	/* Huaqin add for ZQL1650-1562 by xudayi at 2018/06/20 end */
 
 	pr_debug("%s: leave ret %d\n", __func__, ret);
 	return ret;

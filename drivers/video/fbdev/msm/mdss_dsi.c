@@ -1,4 +1,4 @@
-/* Copyright (c) 2012-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2012-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -35,7 +35,16 @@
 #include "mdss_dsi_phy.h"
 #include "mdss_dba_utils.h"
 
+/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 start */
+#include "mdss_panel.h"
+/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 end */
+
+
 #define CMDLINE_DSI_CTL_NUM_STRING_LEN 2
+
+/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 start */
+extern char mdss_mdp_panel[MDSS_MAX_PANEL_LEN];
+/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 end */
 
 /* Master structure to hold all the information about the DSI/panel */
 static struct mdss_dsi_data *mdss_dsi_res;
@@ -384,31 +393,23 @@ static int mdss_dsi_panel_power_off(struct mdss_panel_data *pdata)
 		pr_warn("%s: Panel reset failed. rc=%d\n", __func__, ret);
 		ret = 0;
 	}
+	/* Huaqin modify for Modification sequence by qimaokangat 2018/05/31 start  */
 	/* Huaqin modify for sequence test by xieguoqiang at 2018/01/25 start  */
-	//if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
+	if (mdss_dsi_pinctrl_set_state(ctrl_pdata, false))
 		pr_debug("reset disable: pinctrl not enabled\n");
+	mdelay(5);
 	/* Huaqin modify for sequence test by xieguoqiang at 2018/01/25 end */
-	ret = msm_dss_enable_vreg(
-		ctrl_pdata->panel_power_data.vreg_config,
-		ctrl_pdata->panel_power_data.num_vreg, 0);
-/* Huaqin modify for ZQL1650 by xieguoqiang at 2018/02/09 start */
-	if (pdata->panel_info.panel_dead == true)
-	{
-		mdelay(50);
-		mdss_dsi_panel_reset(pdata, 1);
-		mdss_dsi_panel_cmds_send(ctrl_pdata, &ctrl_pdata->esd_recover_cmds, CMD_REQ_COMMIT);
-		mdelay(1000);
-		mdss_dsi_panel_reset(pdata, 0);
-		mdelay(20);
-		mdss_dsi_panel_reset(pdata, 1);
-		mdelay(20);
-		mdss_dsi_panel_reset(pdata, 0);
-	}
-/* Huaqin modify for ZQL1650 by xieguoqiang at 2018/02/09 end */
-	if (ret)
-		pr_err("%s: failed to disable vregs for %s\n",
-			__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
-
+	/* Huaqin modify for Modification sequence by qimaokangat 2018/05/31 end  */
+/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 start */
+	/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 start  */
+		ret = msm_dss_enable_vreg(
+			ctrl_pdata->panel_power_data.vreg_config,
+			ctrl_pdata->panel_power_data.num_vreg, 0);
+		if (ret)
+			pr_err("%s: failed to disable vregs for %s\n",
+				__func__, __mdss_dsi_pm_name(DSI_PANEL_PM));
+	/* Huaqin modify for Modification sequence by qimaokang at 2018/06/25 end  */
+/* Huaqin modify for ZQL1650-1523 by diganyun at 2018/06/07 end */
 end:
 	return ret;
 }
@@ -776,7 +777,7 @@ static ssize_t mdss_dsi_cmd_state_read(struct file *file, char __user *buf,
 	if (blen < 0)
 		return 0;
 
-	if (copy_to_user(buf, buffer, blen))
+	if (copy_to_user(buf, buffer, min(count, (size_t)blen+1)))
 		return -EFAULT;
 
 	*ppos += blen;
@@ -2574,7 +2575,7 @@ static void mdss_dsi_dba_work(struct work_struct *work)
 	} else {
 		pr_debug("%s: dba device not ready, queue again\n", __func__);
 		queue_delayed_work(ctrl_pdata->workq,
-				&ctrl_pdata->dba_work, HZ);
+				&ctrl_pdata->dba_work, msecs_to_jiffies(1000));
 	}
 }
 
@@ -2870,7 +2871,7 @@ static int mdss_dsi_event_handler(struct mdss_panel_data *pdata,
 		if (IS_ENABLED(CONFIG_MSM_DBA) &&
 			pdata->panel_info.is_dba_panel) {
 				queue_delayed_work(ctrl_pdata->workq,
-					&ctrl_pdata->dba_work, HZ);
+					&ctrl_pdata->dba_work, msecs_to_jiffies(1000));
 		}
 		break;
 	case MDSS_EVENT_DSI_TIMING_DB_CTRL:

@@ -224,6 +224,7 @@ static inline void inode_attach_wb(struct inode *inode, struct page *page)
 static inline void inode_detach_wb(struct inode *inode)
 {
 	if (inode->i_wb) {
+		WARN_ON_ONCE(!(inode->i_state & I_CLEAR));
 		wb_put(inode->i_wb);
 		inode->i_wb = NULL;
 	}
@@ -383,5 +384,8 @@ void tag_pages_for_writeback(struct address_space *mapping,
 			     pgoff_t start, pgoff_t end);
 
 void account_page_redirty(struct page *page);
+
+void sb_mark_inode_writeback(struct inode *inode);
+void sb_clear_inode_writeback(struct inode *inode);
 
 #endif		/* WRITEBACK_H */

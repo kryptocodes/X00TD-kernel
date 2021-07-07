@@ -1,4 +1,4 @@
-/* Copyright (c) 2015-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2015-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -31,7 +31,9 @@
 #define DEFAULT_MCLK_RATE 9600000
 
 /* Huaqin add sar switcher by chenyijun5 at 2018/03/20 start*/
+#ifdef CONFIG_INPUT_SX9310
 extern void sar_switch(bool);
+#endif
 /* Huaqin add sar switcher by chenyijun5 at 2018/03/20 end*/
 
 struct dev_config {
@@ -2531,8 +2533,10 @@ int msm_mi2s_snd_startup(struct snd_pcm_substream *substream)
 		/* Huaqin add for config i2s tert dai for nxp pa by xudayi at 2018/03/03 start */
 		if (index == TERT_MI2S) {
 			/* Huaqin add sar switcher by chenyijun5 at 2018/03/20 start*/
+			#ifdef CONFIG_INPUT_SX9310
 			pr_debug("%s before open PA, close SAR!\n", __func__);
 			sar_switch(0);
+			#endif
 			/* Huaqin add sar switcher by chenyijun5 at 2018/03/20 end*/
 		    msm_cdc_pinctrl_select_active_state(pdata->tert_mi2s_gpio_p);
 			printk("daixianze %s tert_mi2s_gpio_p\n", __func__);
@@ -2586,18 +2590,18 @@ void msm_mi2s_snd_shutdown(struct snd_pcm_substream *substream)
 		    msm_cdc_pinctrl_select_sleep_state(pdata->tert_mi2s_gpio_p);
 			pr_err("daixianze %s tert_mi2s_gpio_p \n", __func__);
 			/* Huaqin add sar switcher by chenyijun5 at 2018/03/20 start*/
+			#ifdef CONFIG_INPUT_SX9310
 			pr_debug("%s after close PA, open SAR!\n", __func__);
 			sar_switch(1);
+			#endif
 			/* Huaqin add sar switcher by chenyijun5 at 2018/03/20 end*/
 		}
 		/* Huaqin add for config i2s tert dai for nxp pa by xudayi at 2018/03/03 end */
 
 		ret = msm_mi2s_set_sclk(substream, false);
-		if (ret < 0) {
+		if (ret < 0)
 			pr_err("%s:clock disable failed for MI2S (%d); ret=%d\n",
 				__func__, index, ret);
-			mi2s_intf_conf[index].ref_cnt++;
-		}
 		if (mi2s_intf_conf[index].msm_is_ext_mclk) {
 			mi2s_mclk[index].enable = 0;
 			pr_debug("%s: Disabling mclk, clk_freq_in_hz = %u\n",

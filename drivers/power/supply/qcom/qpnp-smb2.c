@@ -219,7 +219,13 @@ extern void asus_smblib_relax(struct smb_charger *chg);
 /* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 start */
 struct gpio_control *global_gpio;	//global gpio_control
 /* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
+/* Huaqin modify for ZQL1650-647 add otg debug info by diganyun at 2018/03/16 start*/
+#ifdef HQ_BUILD_FACTORY
+static int __debug_mask = 0x10;
+#else
 static int __debug_mask;
+#endif
+/* Huaqin modify for ZQL1650-647 add otg debug info by diganyun at 2018/03/16 end*/
 module_param_named(
 	debug_mask, __debug_mask, int, S_IRUSR | S_IWUSR
 );
@@ -1910,7 +1916,7 @@ static int smb2_chg_config_init(struct smb2 *chip)
 		break;
 	case PM660_SUBTYPE:
 		chip->chg.smb_version = PM660_SUBTYPE;
-		chip->chg.wa_flags |= BOOST_BACK_WA | OTG_WA;
+		chip->chg.wa_flags |= BOOST_BACK_WA | OTG_WA | OV_IRQ_WA_BIT;
 		chg->param.freq_buck = pm660_params.freq_buck;
 		chg->param.freq_boost = pm660_params.freq_boost;
 		chg->chg_freq.freq_5V		= 650;
@@ -2552,6 +2558,61 @@ int32_t get_ID_vadc_voltage(void){
 }
 /* Huaqin modify for ZQL1650-70 Identify Adapter ID by fangaijun at 2018/02/8 end */
 
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 start */
+#define COUNTRY_CODE_PATH "/persist/flag/countrycode.txt"
+
+void read_BR_countrycode_work(struct work_struct *work)
+{
+	struct file *fp = NULL;
+	mm_segment_t old_fs;
+	loff_t pos_lsts = 0;
+	char buf[32];
+    int readlen = 0;
+	int cnt = 5;
+
+	fp = filp_open(COUNTRY_CODE_PATH, O_RDONLY, 0);
+	if (IS_ERR_OR_NULL(fp)) {
+        printk("[BAT][CHG] OPEN (%s) failed !! \n", COUNTRY_CODE_PATH);
+		if(--cnt >=0)
+			schedule_delayed_work(&smbchg_dev->read_countrycode_work, msecs_to_jiffies(3000));
+		return ;	/*No such file or directory*/
+	}
+	/* For purpose that can use read/write system call */
+	if (fp->f_op != NULL) {
+		old_fs = get_fs();
+		set_fs(KERNEL_DS);
+		pos_lsts = 0;
+		readlen = vfs_read(fp, buf,strlen(buf), &pos_lsts);
+		if(readlen < 0) {
+			set_fs(old_fs);
+			filp_close(fp, NULL);
+			printk("[BAT][CHG] Readlen <0\n");
+			if(--cnt >=0)
+				schedule_delayed_work(&smbchg_dev->read_countrycode_work, msecs_to_jiffies(3000));
+			return ;
+		}
+		buf[readlen]='\0';
+	} else {
+		printk("[BAT][CHG] Read (%s) error\n", COUNTRY_CODE_PATH);
+		if(--cnt >=0)
+			schedule_delayed_work(&smbchg_dev->read_countrycode_work, msecs_to_jiffies(3000));
+		return;
+	}
+
+	if (strcmp(buf, "BR") == 0)
+		BR_countrycode = COUNTRY_BR;
+	else if(strcmp(buf, "IN") == 0)
+		BR_countrycode = COUNTRY_IN;
+	else
+		BR_countrycode = COUNTRY_OTHER;
+
+	printk("country code : %s, type %d\n", buf, BR_countrycode);
+	set_fs(old_fs);
+	filp_close(fp, NULL);
+	return ;
+}
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 end */
+
 static int smb2_probe(struct platform_device *pdev)
 {
 	struct smb2 *chip;
@@ -2623,6 +2684,10 @@ static int smb2_probe(struct platform_device *pdev)
 		pr_err("parent regmap is missing\n");
 		return -EINVAL;
 	}
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 start */
+	INIT_DELAYED_WORK(&chg->read_countrycode_work, read_BR_countrycode_work);
+	schedule_delayed_work(&chg->read_countrycode_work, msecs_to_jiffies(8000));
+/* Huaqin modify for ZQL1650-74 Countrycode Adapter by diganyun at 2018/03/26 end */
 
 	rc = smb2_chg_config_init(chip);
 	if (rc < 0) {

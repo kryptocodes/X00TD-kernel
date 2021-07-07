@@ -1,4 +1,4 @@
-/* Copyright (c) 2013-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2013-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -45,7 +45,7 @@
 
 #define ENABLE_CPP_LOW		0
 
-#define CPP_CMD_TIMEOUT_MS	300
+#define CPP_CMD_TIMEOUT_MS	120
 #define MSM_CPP_INVALID_OFFSET	0x00000000
 #define MSM_CPP_NOMINAL_CLOCK	266670000
 #define MSM_CPP_TURBO_CLOCK	320000000
@@ -449,10 +449,12 @@ static unsigned long msm_cpp_queue_buffer_info(struct cpp_device *cpp_dev,
 	buff->map_info.buff_info = *buffer_info;
 	buff->map_info.buf_fd = buffer_info->fd;
 
+#if defined(CONFIG_TRACING) && defined(DEBUG)
 	trace_printk("fd %d index %d native_buff %d ssid %d %d\n",
 		buffer_info->fd, buffer_info->index,
 		buffer_info->native_buff, buff_queue->session_id,
 		buff_queue->stream_id);
+#endif
 
 	if (buff_queue->security_mode == SECURE_MODE)
 		rc = cam_smmu_get_stage2_phy_addr(cpp_dev->iommu_hdl,
@@ -484,10 +486,12 @@ static void msm_cpp_dequeue_buffer_info(struct cpp_device *cpp_dev,
 {
 	int ret = -1;
 
+#if defined(CONFIG_TRACING) && defined(DEBUG)
 	trace_printk("fd %d index %d native_buf %d ssid %d %d\n",
 		buff->map_info.buf_fd, buff->map_info.buff_info.index,
 		buff->map_info.buff_info.native_buff, buff_queue->session_id,
 		buff_queue->stream_id);
+#endif
 
 	if (buff_queue->security_mode == SECURE_MODE)
 		ret = cam_smmu_put_stage2_phy_addr(cpp_dev->iommu_hdl,
@@ -958,9 +962,14 @@ static irqreturn_t msm_cpp_irq(int irq_num, void *data)
 	if (irq_status & 0x8) {
 		tx_level = msm_camera_io_r(cpp_dev->base +
 			MSM_CPP_MICRO_FIFO_TX_STAT) >> 2;
-		for (i = 0; i < tx_level; i++) {
-			tx_fifo[i] = msm_camera_io_r(cpp_dev->base +
-				MSM_CPP_MICRO_FIFO_TX_DATA);
+		if (tx_level < MSM_CPP_TX_FIFO_LEVEL) {
+			for (i = 0; i < tx_level; i++) {
+				tx_fifo[i] = msm_camera_io_r(cpp_dev->base +
+					MSM_CPP_MICRO_FIFO_TX_DATA);
+			}
+		} else {
+			pr_err("Fatal invalid tx level %d", tx_level);
+			goto err;
 		}
 		spin_lock_irqsave(&cpp_dev->tasklet_lock, flags);
 		queue_cmd = &cpp_dev->tasklet_queue_cmd[cpp_dev->taskletq_idx];
@@ -1015,6 +1024,7 @@ static irqreturn_t msm_cpp_irq(int irq_num, void *data)
 		pr_debug("DEBUG_R1: 0x%x\n",
 			msm_camera_io_r(cpp_dev->base + 0x8C));
 	}
+err:
 	msm_camera_io_w(irq_status, cpp_dev->base + MSM_CPP_MICRO_IRQGEN_CLR);
 	return IRQ_HANDLED;
 }

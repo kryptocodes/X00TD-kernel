@@ -1,4 +1,4 @@
-/* Copyright (c) 2014-2017, The Linux Foundation. All rights reserved.
+/* Copyright (c) 2014-2018, The Linux Foundation. All rights reserved.
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License version 2 and
@@ -171,8 +171,6 @@ struct mailbox_config_info {
  * @kwork:			Work to be executed when an irq is received.
  * @kworker:			Handle to the entity processing of
 				deferred commands.
- * @tasklet			Handle to tasklet to process incoming data
-				packets in atomic manner.
  * @task:			Handle to the task context used to run @kworker.
  * @use_ref:			Active uses of this transport use this to grab
  *				a reference.  Used for ssr synchronization.
@@ -216,7 +214,6 @@ struct edge_info {
 	struct kthread_work kwork;
 	struct kthread_worker kworker;
 	struct task_struct *task;
-	struct tasklet_struct tasklet;
 	struct srcu_struct use_ref;
 	bool in_ssr;
 	spinlock_t rx_lock;
@@ -874,15 +871,6 @@ static void __rx_worker(struct edge_info *einfo, bool atomic_ctx)
 
 	rcu_id = srcu_read_lock(&einfo->use_ref);
 
-	if (unlikely(!einfo->rx_fifo) && atomic_ctx) {
-		if (!get_rx_fifo(einfo)) {
-			srcu_read_unlock(&einfo->use_ref, rcu_id);
-			return;
-		}
-		einfo->in_ssr = false;
-		einfo->xprt_if.glink_core_if_ptr->link_up(&einfo->xprt_if);
-	}
-
 	if (einfo->in_ssr) {
 		srcu_read_unlock(&einfo->use_ref, rcu_id);
 		return;
@@ -1186,18 +1174,6 @@ static void __rx_worker(struct edge_info *einfo, bool atomic_ctx)
 }
 
 /**
- * rx_worker_atomic() - worker function to process received command in atomic
- *			context.
- * @param:	The param parameter passed during initialization of the tasklet.
- */
-static void rx_worker_atomic(unsigned long param)
-{
-	struct edge_info *einfo = (struct edge_info *)param;
-
-	__rx_worker(einfo, true);
-}
-
-/**
  * rx_worker() - worker function to process received commands
  * @work:	kwork associated with the edge to process commands on.
  */
@@ -1216,7 +1192,7 @@ irqreturn_t irq_handler(int irq, void *priv)
 	if (einfo->rx_reset_reg)
 		writel_relaxed(einfo->out_irq_mask, einfo->rx_reset_reg);
 
-	tasklet_hi_schedule(&einfo->tasklet);
+	__rx_worker(einfo, true);
 	einfo->rx_irq_count++;
 
 	return IRQ_HANDLED;
@@ -1482,6 +1458,24 @@ static void tx_cmd_ch_remote_close_ack(struct glink_transport_if *if_ptr,
 
 	fifo_tx(einfo, &cmd, sizeof(cmd));
 	srcu_read_unlock(&einfo->use_ref, rcu_id);
+}
+
+/**
+ * subsys_up() - process a subsystem up notification
+ * @if_ptr:	The transport which is up
+ *
+ */
+static void subsys_up(struct glink_transport_if *if_ptr)
+{
+	struct edge_info *einfo;
+
+	einfo = container_of(if_ptr, struct edge_info, xprt_if);
+	if (!einfo->rx_fifo) {
+		if (!get_rx_fifo(einfo))
+			return;
+		einfo->in_ssr = false;
+		einfo->xprt_if.glink_core_if_ptr->link_up(&einfo->xprt_if);
+	}
 }
 
 /**
@@ -2163,6 +2157,7 @@ static void init_xprt_if(struct edge_info *einfo)
 	einfo->xprt_if.tx_cmd_ch_remote_open_ack = tx_cmd_ch_remote_open_ack;
 	einfo->xprt_if.tx_cmd_ch_remote_close_ack = tx_cmd_ch_remote_close_ack;
 	einfo->xprt_if.ssr = ssr;
+	einfo->xprt_if.subsys_up = subsys_up;
 	einfo->xprt_if.allocate_rx_intent = allocate_rx_intent;
 	einfo->xprt_if.deallocate_rx_intent = deallocate_rx_intent;
 	einfo->xprt_if.tx_cmd_local_rx_intent = tx_cmd_local_rx_intent;
@@ -2348,7 +2343,6 @@ static int glink_smem_native_probe(struct platform_device *pdev)
 	init_waitqueue_head(&einfo->tx_blocked_queue);
 	init_kthread_work(&einfo->kwork, rx_worker);
 	init_kthread_worker(&einfo->kworker);
-	tasklet_init(&einfo->tasklet, rx_worker_atomic, (unsigned long)einfo);
 	einfo->read_from_fifo = read_from_fifo;
 	einfo->write_to_fifo = write_to_fifo;
 	init_srcu_struct(&einfo->use_ref);
@@ -2434,6 +2428,7 @@ static int glink_smem_native_probe(struct platform_device *pdev)
 									rc);
 		goto request_irq_fail;
 	}
+	einfo->in_ssr = true;
 	rc = enable_irq_wake(irq_line);
 	if (rc < 0)
 		pr_err("%s: enable_irq_wake() failed on %d\n", __func__,
@@ -2451,7 +2446,6 @@ smem_alloc_fail:
 	flush_kthread_worker(&einfo->kworker);
 	kthread_stop(einfo->task);
 	einfo->task = NULL;
-	tasklet_kill(&einfo->tasklet);
 kthread_fail:
 	iounmap(einfo->out_irq_reg);
 ioremap_fail:
@@ -2537,7 +2531,6 @@ static int glink_rpm_native_probe(struct platform_device *pdev)
 	init_waitqueue_head(&einfo->tx_blocked_queue);
 	init_kthread_work(&einfo->kwork, rx_worker);
 	init_kthread_worker(&einfo->kworker);
-	tasklet_init(&einfo->tasklet, rx_worker_atomic, (unsigned long)einfo);
 	einfo->intentless = true;
 	einfo->read_from_fifo = memcpy32_fromio;
 	einfo->write_to_fifo = memcpy32_toio;
@@ -2699,7 +2692,6 @@ toc_init_fail:
 	flush_kthread_worker(&einfo->kworker);
 	kthread_stop(einfo->task);
 	einfo->task = NULL;
-	tasklet_kill(&einfo->tasklet);
 kthread_fail:
 	iounmap(msgram);
 msgram_ioremap_fail:
@@ -2828,7 +2820,6 @@ static int glink_mailbox_probe(struct platform_device *pdev)
 	init_waitqueue_head(&einfo->tx_blocked_queue);
 	init_kthread_work(&einfo->kwork, rx_worker);
 	init_kthread_worker(&einfo->kworker);
-	tasklet_init(&einfo->tasklet, rx_worker_atomic, (unsigned long)einfo);
 	einfo->read_from_fifo = read_from_fifo;
 	einfo->write_to_fifo = write_to_fifo;
 	init_srcu_struct(&einfo->use_ref);
@@ -2938,6 +2929,7 @@ static int glink_mailbox_probe(struct platform_device *pdev)
 	cfg_p_addr = smem_virt_to_phys(mbox_cfg);
 	writel_relaxed(lower_32_bits(cfg_p_addr), mbox_loc);
 	writel_relaxed(upper_32_bits(cfg_p_addr), mbox_loc + 4);
+	einfo->in_ssr = true;
 	send_irq(einfo);
 	iounmap(mbox_size);
 	iounmap(mbox_loc);
@@ -2950,7 +2942,6 @@ smem_alloc_fail:
 	flush_kthread_worker(&einfo->kworker);
 	kthread_stop(einfo->task);
 	einfo->task = NULL;
-	tasklet_kill(&einfo->tasklet);
 kthread_fail:
 	iounmap(einfo->rx_reset_reg);
 rx_reset_ioremap_fail:
